@@ -1,0 +1,22 @@
+{
+  "name": "corsair-battery-level",
+  "private": "true",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "npm run build && npm run start:builded",
+    "start:builded": "node index.js",
+    "build": "tsc"
+  },
+  "author": "Aleksandr Plokhikh",
+  "license": "ISC",
+  "dependencies": {
+    "koffi": "^2.6.6",
+    "typescript": "^5.2.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0"
+  }
+}
