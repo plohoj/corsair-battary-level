@@ -82,6 +82,9 @@ const CorsairDeviceId = koffi.array('char', CORSAIR_STRING_SIZE_M)
 const CorsairDeviceFilter = koffi.struct('CorsairDeviceFilter', {
 	deviceTypeMask: 'int',
 });
+type CorsairDeviceFilterStruct = {
+	deviceTypeMask: number;
+}
 
 const CorsairDeviceInfo = koffi.struct('CorsairDeviceInfo', { // contains information about device
 	type: 'int',                // enum describing device type
@@ -91,6 +94,14 @@ const CorsairDeviceInfo = koffi.struct('CorsairDeviceInfo', { // contains inform
 	ledCount: 'int',                          // number of controllable LEDs on the device
 	channelCount: 'int',                      // number of channels controlled by the device
 });
+type CorsairDeviceInfoStruct = {
+	type: number,
+	id: string,
+	serial: string,
+	model: string,
+	ledCount: number,
+	channelCount: number,
+}
 
 const CorsairVersion = koffi.struct('CorsairVersion', { // contains information about version that consists of three components
 	major: 'int',
@@ -154,23 +165,70 @@ const CorsairSessionStateChangedHandler = koffi.proto('CorsairSessionStateChange
 const lib = koffi.load('lib/iCUESDK.x64_2019.dll');
 
 // #region functions
-const CorsairConnect = lib.stdcall('CorsairConnect', 'int', [koffi.pointer(CorsairSessionStateChangedHandler),  koffi.pointer('void')]);
+const CorsairConnect = lib.stdcall('CorsairConnect', 'int', [
+	koffi.pointer(CorsairSessionStateChangedHandler),  koffi.pointer('void')
+]) as (callBack: koffi.IKoffiRegisteredCallback, context: undefined) => CorsairError;
 
 const CorsairGetDevices = lib.stdcall('CorsairGetDevices', 'int', [
 	koffi.pointer(CorsairDeviceFilter), 'int', koffi.out(koffi.pointer(CorsairDeviceInfo)), koffi.out(koffi.pointer('int'))
-]);
+]) as (filter: CorsairDeviceFilterStruct, sizeMax: number, devices: CorsairDeviceInfoStruct[], size: number[]) => CorsairError;
 
 const CorsairReadDeviceProperty = lib.stdcall('CorsairReadDeviceProperty', 'int', [
 	'string', 'int', 'unsigned int', koffi.out(koffi.pointer(CorsairProperty))
-]);
+]) as (deviceId: string, corsairDevicePropertyId: CorsairDevicePropertyId, index: number, property: unknown) => CorsairError;
 // #endregion
+
+// prevent node exit https://github.com/Koromix/koffi/issues/93#issuecomment-1760751390
+const intervalKey = setInterval(() => {}, 1000);
 
 let connectCallBack;
 
-function connect(onConnect: () => void): void {
+const expectedModel = 'VOID PRO WIRELESS';
+const expectedModelRegExp = new RegExp(expectedModel, 'i');
+
+function onConnect(): void {
+	const filter = {
+		deviceTypeMask: CorsairDeviceType.CDT_Headset,
+	};
+	const devices: CorsairDeviceInfoStruct[] = [{} as CorsairDeviceInfoStruct];
+	const size = [0];
+	const getDevicesResult = CorsairGetDevices(filter, CORSAIR_DEVICE_COUNT_MAX, devices, size);
+	
+	if (getDevicesResult !== CorsairError.CE_Success) {
+		console.log('Error');
+		clearInterval(intervalKey);
+		return;
+	}
+
+	const device = devices.find(device => expectedModelRegExp.test(device.model));
+	if (!device) {
+		console.log('Error');
+		clearInterval(intervalKey);
+		return;
+	}
+
+	const deviceId = device.id;
+	const property: any = {};
+	try {
+		const getPropertyResult = CorsairReadDeviceProperty(deviceId, CorsairDevicePropertyId.CDPI_BatteryLevel, 0, property);
+		if (getPropertyResult !== CorsairError.CE_Success) {
+			console.log('Error');
+			clearInterval(intervalKey);
+			return;
+		}
+	} catch {
+		console.log('Error');
+		clearInterval(intervalKey);
+		return;
+	}
+
+	console.log(property.value.int32);
+	clearInterval(intervalKey);
+}
+
+function connect(): void {
 	connectCallBack = koffi.register((context: unknown, changes: any) => {
 		const decodedChanges = koffi.decode(changes, CorsairSessionStateChanged)
-		console.log('connect callback:', decodedChanges);
 		if (decodedChanges.state === CorsairSessionState.CSS_Connected) {
 			onConnect();
 		}
@@ -180,34 +238,10 @@ function connect(onConnect: () => void): void {
 	// await new Promise<void>((resolve) => {
 	// });
 	const connectResult = CorsairConnect(connectCallBack, undefined);
-	console.log('connect result:', CorsairError[connectResult]);
+	if (connectResult !== CorsairError.CE_Success) {
+		console.log('Error');
+		clearInterval(intervalKey);
+	}
 }
 
-setTimeout(() => {console.log('LEL')}, 99999999);
-
-const expectedModel = 'VOID PRO WIRELESS';
-const expectedModelRegExp = new RegExp(expectedModel, 'i');
-
-connect(() => {
-	const filter = {
-		deviceTypeMask: CorsairDeviceType.CDT_Headset,
-	};
-	const devices: any[] = [null];
-	const size = [0];
-	const getDevicesResult = CorsairGetDevices(filter, CORSAIR_DEVICE_COUNT_MAX, devices, size);
-	
-	console.log(CorsairError[getDevicesResult], devices, size);
-
-	const device = devices.find(device => expectedModelRegExp.test(device.model));
-
-	const deviceId = device.id;
-
-	const property: any = {};
-	try {
-		const getPropertyResult = CorsairReadDeviceProperty(deviceId, CorsairDevicePropertyId.CDPI_BatteryLevel, 0, property);
-		console.log(CorsairError[getPropertyResult], property);
-		console.log(property.value.int32);
-	} catch (err) {
-		console.log(err);
-	}
-});
+connect();
